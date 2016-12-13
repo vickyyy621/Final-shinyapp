@@ -1,0 +1,284 @@
+---
+title: "Final Project"
+author: "Siling Chen"
+date: "December 12, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#### In this project, we want to explore how people from different places response to the weather conditions via posting tweets. Are they using positive words to express their good feelings, or complaining about the weather? To get sufficient information, we need to use Twitter.
+
+***
+
+## 1. Connect RStudio and Twitter
+
+```{r warning=FALSE}
+library(devtools)
+library(twitteR)
+```
+
+```{r set up}
+download.file(url="http://curl.haxx.se/ca/cacert.pem", destfile="cacert.pem")
+
+## Log in with the twitter account
+api_key <- 	"kBrTp9b6NvY8VX4Pc2qA8yVef"
+api_secret <- "ermJ5yxIJwB6FpsGfgSRrwfiutrzChpK2wxk5jR1ExtqWbgYnI"
+access_token <- "551954831-Kw7wRPFsehc1zntJmqleOBYp4levSvusU6ikIaXF"
+access_token_secret <- "JejmhXMFXyjHSQFLr2lvRpVdKlkzu1fTIuTUONK5V5Ypc"
+
+setup_twitter_oauth(api_key, api_secret,access_token,access_token_secret)
+```
+
+***
+
+## 2. Obtain Information From Twitter
+
+### * Set "weather" as the tweet topic
+
+We pick three U.S cities as research objects: New York City, Houston, and Miami. And we use R to obtain 4000 tweets that come from these three cities with the key word "weather" from Jan 1st, 2016 to present.
+
+```{r warning = FALSE}
+## To only get tweets within 50 miles of these three cities
+tweetsNewYork <- searchTwitter("weather", n=4000, lang="en", geocode="40.712946,-74.005854,50mi", since="2016-01-01")
+
+tweetsHouston <- searchTwitter("weather", n=4000, lang="en", geocode="29.760204,-95.369754,50mi", since="2016-01-01")
+
+tweetsMiami <- searchTwitter("weather", n=4000, lang="en", geocode="25.761624,-80.192298,50mi", since="2016-01-01")
+```
+
+
+### * Mine the location
+
+```{r warning=FALSE}
+library(ggplot2)
+library(ggthemes)
+library(ggmap)
+```
+
+```{r Map, echo=FALSE, warning=FALSE, message=FALSE}
+visualMap<- function(data, left, down, right, top, alpha, size = 1){
+  zoom= c(left, down, right, top)  
+  get_map(location = zoom, maptype = "roadmap")
+  p<- ggmap(get_map(location = zoom, maptype = "roadmap"), extent= 'panel', darken = c(0.2, "white"))
+  p + geom_point(data = data, aes(x=Longitude, y=Latitude, colour=Area),alpha=alpha, size =size)
+}
+
+locationData <- data.frame("Area" = c("New York","Houston","Miami"), "Latitude" = c(40.712946,29.760204,25.761624), "Longitude" = c(-74.005854,-95.369754,-80.192298))
+
+visualMap(locationData,-125,20,-70,50,0.9,5)
+```
+
+***
+
+## 3. Clean Data
+
+Data that we obtain from Twitter is unorganized, so we need to use several functions from the package "plyr" to tidy the data and extract effective information.
+
+```{r warning=FALSE, message=FALSE}
+library(plyr)
+```
+
+
+### * Extract textual content from tweets
+
+```{r}
+# For each element of a list, apply function then combine results into an array.
+NewYork.text <- laply(tweetsNewYork, function(tweets) tweets$getText()) 
+Houston.text <- laply(tweetsHouston, function(tweets) tweets$getText()) 
+Miami.text <- laply(tweetsMiami, function(tweets) tweets$getText())
+```
+
+
+### * Split handling
+
+```{r split string}
+# Split strings and store them in vectors
+splitString <- function(stringArray){
+  resultVector <- c()
+  for (arrayIndex in 1:length(stringArray)){
+    stringList.i <- strsplit(stringArray[arrayIndex], " ")
+    resultVector <- c(resultVector,as.vector(stringList.i[[1]]))
+  }
+  return(resultVector)
+}
+
+NewYork.vector <- splitString(NewYork.text)
+Houston.vector <- splitString(Houston.text)
+Miami.vector <- splitString(Miami.text)
+
+# Convert to lower case
+NewYork.vector <- tolower(NewYork.vector)
+Houston.vector <- tolower(Houston.vector)
+Miami.vector <- tolower(Miami.vector)
+```
+
+
+### * Delect the @some and website information
+
+```{r}
+delectExtra <- function(stringVector,extralVector){
+  resultVector <- stringVector
+  for (i in 1:length(extralVector)){
+    resultVector <- resultVector[-grep(pattern = extralVector[i] ,value = FALSE, resultVector)]
+  }
+  return(resultVector)
+}
+
+NewYork.vector <- delectExtra(stringVector = NewYork.vector,extralVector = c("\\@","/"))
+Houston.vector <- delectExtra(stringVector = Houston.vector,extralVector = c("\\@","/"))
+Miami.vector <- delectExtra(stringVector = Miami.vector,extralVector = c("\\@","/"))
+```
+
+
+### * Replace some extra words
+
+```{r replace words}
+replaceExtra <- function(stringVector,extraVector){
+  resultVector <- stringVector
+  for (i in extraVector){
+    for (j in 1:length(stringVector)){
+      resultVector[j] <- sub(pattern = i, replacement = "", resultVector[j])
+    }
+  }
+  return(resultVector)
+}
+
+NewYork.vector <- replaceExtra(stringVector = NewYork.vector,extraVector = c(";","&","\\$","'","-",",",'"',"\\?","\\.","+",",","\\(","\\)","\\[","\\]","\\|",":","???","!","\\\\.\\\\","#"))
+
+Houston.vector <- replaceExtra(stringVector = Houston.vector,extraVector = c(";","&","\\$","'","-",",",'"',"\\?","\\.","+",",","\\(","\\)","\\[","\\]","\\|",":","???","!","\\\\.\\\\","#"))
+
+Miami.vector <- replaceExtra(stringVector = Miami.vector,extraVector = c(";","&","\\$","'","-",",",'"',"\\?","\\.","+","\\(","\\)","\\[","\\]","\\|",":","???","!","\\\\.\\\\","#"))
+```
+
+
+### * Delete useless words
+
+```{r useless words, warning=FALSE}
+# Delect short word
+NewYork.vector <- subset(NewYork.vector, nchar(as.character(NewYork.vector)) >= 3)
+Houston.vector <- subset(Houston.vector, nchar(as.character(Houston.vector)) >= 3)
+Miami.vector <- subset(Miami.vector, nchar(as.character(Miami.vector)) >= 3)
+
+# Delect long word
+NewYork.vector <- subset(NewYork.vector, nchar(as.character(NewYork.vector)) <= 7)
+Houston.vector <- subset(Houston.vector, nchar(as.character(Houston.vector)) <= 7)
+Miami.vector <- subset(Miami.vector, nchar(as.character(Miami.vector)) <= 7)
+
+# Delect stop word (donwload from the website)
+stopWord <- read.table("C:/Users/acer/Desktop/MA415/twitter/result/stopWord.txt")  # Must modify the path if in different computer
+stopWord <- as.character(stopWord[,1])
+stopWord <- tolower(stopWord)
+delectStop <- function(stringVector,stopVector){
+  result <- stringVector
+  for(j in 1:length(stopVector)){
+    result <- subset(result,result != stopVector[j])
+  }
+  return(result)
+}
+
+NewYork.vector <- delectStop(NewYork.vector,stopWord)
+Houston.vector <- delectStop(Houston.vector,stopWord)
+Miami.vector <- delectStop(Miami.vector,stopWord)
+```
+
+***
+
+## 4. Word Frequency
+
+Now we have tidy data, and we want to know the words that people use in posting tweets about local weather. For each three cities, we count frequency of words from each tweet, and we find the top 10 keywords for describing weather and personal feelings.
+
+```{r word frequency}
+# Calculate word frequency
+NewYorkData <- table(NewYork.vector)
+NewYorkTable <- data.frame(word=names(NewYorkData), freq=as.numeric(NewYorkData))
+head(NewYorkTable)
+
+HoustonData <- table(Houston.vector)
+HoustonTable <- data.frame(word=names(HoustonData), freq=as.numeric(HoustonData))
+head(HoustonTable)
+
+MiamiData <- table(Miami.vector)
+MiamiTable <- data.frame(word=names(MiamiData), freq=as.numeric(MiamiData))
+head(MiamiTable)
+
+# Delect word which frequency less than ten times
+NewYorkTable <- NewYorkTable[NewYorkTable$freq >= 10,]
+HoustonTable <- HoustonTable[HoustonTable$freq >= 10,]
+MiamiTable <- MiamiTable[MiamiTable$freq >= 10,]
+```
+
+
+### * Top 10 keywords of Tweets from New York
+
+```{r plot1, echo=FALSE}
+NewYorkTableOrder <- NewYorkTable[order(NewYorkTable$freq,decreasing = TRUE),]
+top10NewYork <- NewYorkTableOrder[1:10,]
+Keyword <- top10NewYork$word
+Frequency <- top10NewYork$freq
+
+plot1 <- ggplot(top10NewYork, aes(x = Keyword, y = Frequency, fill = Keyword)) 
+plot1 + geom_bar(stat="identity") + ggtitle("Top 10 Keywords of Tweets from New York") + theme_grey()
+```
+
+
+According to the following bar plots, we can see that the words that most often used by people in describing weather. Based on these words, we know that both New York City and Houston have cold weather in winter, and Miami has a windy and rainy weather.
+
+### * Top 10 keywords of Tweets from Houston
+
+```{r plot2, echo=FALSE}
+HoustonTableOrder <- HoustonTable[order(HoustonTable$freq,decreasing = TRUE),]
+top10Houston <- HoustonTableOrder[1:10,]
+Keyword <- top10Houston$word
+Frequency <- top10Houston$freq
+
+plot2 <- ggplot(top10Houston, aes(x = Keyword, y = Frequency, fill = Keyword)) 
+plot2 + geom_bar(stat="identity") + ggtitle("Top 10 Keywords of Tweets from Houston") + theme_grey()
+```
+***
+
+### * Top 10 keywords of Tweets from Miami
+
+```{r plot3, echo=FALSE}
+MiamiTableOrder <- MiamiTable[order(MiamiTable$freq,decreasing = TRUE),]
+top10Miami <- MiamiTableOrder[1:10,]
+Keyword <- top10Miami$word
+Frequency <- top10Miami$freq
+
+plot3 <- ggplot(top10Houston, aes(x = Keyword, y = Frequency, fill = Keyword)) 
+plot3 + geom_bar(stat="identity") + ggtitle("Top 10 Keywords of Tweets from Miami") + theme_grey() 
+```
+
+***
+
+## 5. Word Cloud Plot
+
+To present words that people use to describe weather in Twitter, we use the package "wordcloud2" to plot.
+
+```{r warning=FALSE}
+library(wordcloud2)
+```
+
+
+### * Word cloud of New York
+
+```{r echo=FALSE}
+wordcloud2(NewYorkTable)
+```
+
+
+### * Word Cloud of Houston
+ 
+```{r echo=FALSE}
+wordcloud2(HoustonTable)
+```
+
+
+### * Word Cloud of Miami
+
+```{r echo=FALSE}
+wordcloud2(MiamiTable)
+```
